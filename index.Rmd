@@ -1,0 +1,281 @@
+---
+title: "Model Based Assessment of Weight Training"
+author: B.A. McDougall\footnote{NSCI Consulting, bamcdougall@nsci-consulting.com}
+date: "Wednesday, July 22, 2015"
+output: html_document
+---
+
+## Abstract
+A supervised Predictive Machine Learning (PML) model evaluates execution for the human activity of weight lifting--dumbell curls.  The method generating the supervised PML model is [Random Forest](https://www.stat.berkeley.edu/~breiman/RandomForests/cc_manual.htm) (rf).  Two rf models are generated and compared with respect to accuracy and Kappa.  In one model, predictors are selected based on qualitative review of exploratory plots.  In the second model, predictors are selected using best known methods, e.g. removing predictors with near-zero variance.
+
+## Introduction
+Given a specification for a human activity (HA), a supervised PML model can assess quality of execution for the HA.  For more information, see the [website](http://groupware.les.inf.puc-rio.br/har#ixzz3ge9XCk9l) of Ugulino et. al.[1].
+
+Methodology of this work is predicated on Reproducible Research (RR).  That is, a reader can reproduce this work within a R-programming framework by downloading and executing this document (Rmd format).
+
+Since this work focuses on developing a rf PML model that classifies quality of an executed HA, only a brief introduction is provided for the physical experiment.  Six male participants with age 20-28 years perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five distinct modes:
+
+* exactly per expert specification (Class A), 
+* throwing the elbows to the front (Class B),
+* lifting the dumbbell only halfway (Class C),
+* lowering the dumbbell only halfway (Class D),
+* and throwing the hips to the front (Class E).
+
+Class A defines the specification. Classes B-E are errors.
+
+
+
+## Experimental Methods
+Discussion of experimental methods is mostly confined to data analyses.  For detailed collection of physical data, see the original work by Ugulino et. al.[1].  Information sufficient for understanding the dataframe is provided.
+
+Data are collected using four inertial measurement units (IMU), which provide three-axes acceleration, gyroscope and magnetometer data at a joint sampling rate of 45 Hz.  Derived features for each Euler angle from each sensor include: mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness.  The authors select seventeen features for modeling.
+
+The eighteen features used for PML development by the original authors are:
+
+* belt sensor: mean and variance of  roll
+* belt sensor:  maximum, range, and variance of accelerometer vector
+* belt sensor:  variance of gyro and variance of magnetometer 7 
+* arm sensor:  variance of accelerometer vector
+* arm sensor:  maximum and minimum of magnetometer 4
+* dumbell sensor:  maximum of acceleration
+* dumbell sensor:  variance of gyro
+* dumbell sensor:  maximum and minimum of magnetometer 4
+* glove sensor:  sum of the pitch and the maximum and minimum of gyro 3
+
+This work trains a supervised PML model using two different groups of predictors that are independent of work by the original authors.
+
+### Prepare R-environment
+The R-environment is prepared and documented:
+```{r library_load, echo=TRUE, cache=FALSE, results='asis', warning=FALSE, message=FALSE}
+library(plyr); library(dplyr) # order dependent
+library(caret); library(ElemStatLearn); library(AppliedPredictiveModeling)
+library(pgmm); library(rpart); library(partykit); library(rpart.plot); 
+library(rattle); library(doParallel); library(C50)
+library(ipred); library(pROC); library(ada); library(gbm);library(mboost);
+library(forecast); library(e1071); library(stringi); library(ElemStatLearn)
+library(xtable); library(knitr); library(Cairo)
+
+setwd("E:\\Brendan\\Documents\\Education\\JohnsHopkins_Crsera\\08_MachineLearning\\Project\\Submitted")
+curDir <- getwd()
+fileList <- dir()
+environment <- sessionInfo()
+write(fileList, file = 'fileList.txt')
+writeLines(unlist(lapply(environment, paste, collapse=" ")),
+           con = 'environment.txt', sep = "\n", useBytes = FALSE)
+```
+Libraries are loaded beyond the minimum requirement that provide exploratory flexibility.
+
+### Load Data
+Data are loaded after a priori review of the *Testing* dataframe.  Columns of NAs are discarded from the *Testing* dataframe. Similarly, the corresponding columns are discarded from the Training dataframe.  Without discarding columns, the training dataframe is [19,622 obs. of 160 variables], and the testing dataframe is [20 obs. of 160 variables].
+```{r dataLoad, echo=TRUE, cache=FALSE, results='markup', warning=FALSE, message=FALSE}
+urlTraining <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTesting <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainingFile <- "./pml-training.csv"
+testingFile <- "./pml-testing.csv"
+
+if( !file.exists(trainingFile) ) download.file(urlTraining, mode="w", trainingFile, method="curl")
+if( !file.exists(trainingFile) ) download.file(urlTesting, mode="w", testingFile, method="curl")
+
+# Caution:  there distinct text entries that need identification for na.strings
+pmlTrainingTrim <- tbl_df(
+    read.csv2('pml-training.csv', sep = ",", stringsAsFactors = FALSE, na.strings = "NA",
+              header = TRUE)
+    )  %>%
+    select(
+        roll_belt, pitch_belt, yaw_belt, total_accel_belt, gyros_belt_x, gyros_belt_y, 
+        gyros_belt_z, accel_belt_x, accel_belt_y, accel_belt_z,    magnet_belt_x, 
+        magnet_belt_y, magnet_belt_z, roll_arm, pitch_arm, yaw_arm,    total_accel_arm,
+        gyros_arm_x, gyros_arm_y, gyros_arm_z, accel_arm_x, accel_arm_y, accel_arm_z, 
+        magnet_arm_x, magnet_arm_y, magnet_arm_z,
+        roll_dumbbell, pitch_dumbbell, yaw_dumbbell, classe
+        ) %>%
+    mutate(
+        roll_belt = as.numeric(roll_belt), pitch_belt = as.numeric(pitch_belt), 
+        yaw_belt = as.numeric(yaw_belt), total_accel_belt = as.numeric(total_accel_belt), 
+        gyros_belt_x = as.numeric(gyros_belt_x), gyros_belt_y = as.numeric(gyros_belt_y), 
+        gyros_belt_z = as.numeric(gyros_belt_z), accel_belt_x = as.numeric(accel_belt_x), 
+        accel_belt_y = as.numeric(accel_belt_y), accel_belt_z = as.numeric(accel_belt_z),
+        magnet_belt_x = as.numeric(magnet_belt_x), magnet_belt_y = as.numeric(magnet_belt_y), 
+        magnet_belt_z = as.numeric(magnet_belt_z), roll_arm = as.numeric(roll_arm),
+        pitch_arm = as.numeric(pitch_arm), yaw_arm = as.numeric(yaw_arm),
+        total_accel_arm = as.numeric(total_accel_arm), gyros_arm_x = as.numeric(gyros_arm_x), 
+        gyros_arm_y = as.numeric(gyros_arm_y), gyros_arm_z = as.numeric(gyros_arm_z), 
+        accel_arm_x = as.numeric(accel_arm_x), accel_arm_y = as.numeric(accel_arm_y), 
+        accel_arm_z = as.numeric(accel_arm_z), magnet_arm_x = as.numeric(magnet_arm_x), 
+        magnet_arm_y = as.numeric(magnet_arm_y), magnet_arm_z = as.numeric(magnet_arm_z),
+        roll_dumbbell = as.numeric(roll_dumbbell), pitch_dumbbell = as.numeric(pitch_dumbbell), 
+        yaw_dumbbell = as.numeric(yaw_dumbbell), classe = as.factor(classe)
+        )
+
+pmlTestingTrim <- tbl_df(
+    read.csv2('pml-testing.csv', sep = ",", stringsAsFactors = FALSE, na.strings = "NA",
+              header = TRUE)
+    ) %>%
+    select(
+        roll_belt, pitch_belt, yaw_belt, total_accel_belt, gyros_belt_x, gyros_belt_y, 
+        gyros_belt_z, accel_belt_x, accel_belt_y, accel_belt_z,    magnet_belt_x, 
+        magnet_belt_y, magnet_belt_z, roll_arm, pitch_arm, yaw_arm,    total_accel_arm,
+        gyros_arm_x, gyros_arm_y, gyros_arm_z, accel_arm_x, accel_arm_y, accel_arm_z, 
+        magnet_arm_x, magnet_arm_y, magnet_arm_z,
+        roll_dumbbell, pitch_dumbbell, yaw_dumbbell
+        )  %>%
+    mutate(
+        roll_belt = as.numeric(roll_belt), pitch_belt = as.numeric(pitch_belt), 
+        yaw_belt = as.numeric(yaw_belt), total_accel_belt = as.numeric(total_accel_belt), 
+        gyros_belt_x = as.numeric(gyros_belt_x), gyros_belt_y = as.numeric(gyros_belt_y), 
+        gyros_belt_z = as.numeric(gyros_belt_z), accel_belt_x = as.numeric(accel_belt_x), 
+        accel_belt_y = as.numeric(accel_belt_y), accel_belt_z = as.numeric(accel_belt_z),
+        magnet_belt_x = as.numeric(magnet_belt_x), magnet_belt_y = as.numeric(magnet_belt_y), 
+        magnet_belt_z = as.numeric(magnet_belt_z), roll_arm = as.numeric(roll_arm),
+        pitch_arm = as.numeric(pitch_arm), yaw_arm = as.numeric(yaw_arm),
+        total_accel_arm = as.numeric(total_accel_arm), gyros_arm_x = as.numeric(gyros_arm_x), 
+        gyros_arm_y = as.numeric(gyros_arm_y), gyros_arm_z = as.numeric(gyros_arm_z), 
+        accel_arm_x = as.numeric(accel_arm_x), accel_arm_y = as.numeric(accel_arm_y), 
+        accel_arm_z = as.numeric(accel_arm_z), magnet_arm_x = as.numeric(magnet_arm_x), 
+        magnet_arm_y = as.numeric(magnet_arm_y), magnet_arm_z = as.numeric(magnet_arm_z),
+        roll_dumbbell = as.numeric(roll_dumbbell), pitch_dumbbell = as.numeric(pitch_dumbbell), 
+        yaw_dumbbell = as.numeric(yaw_dumbbell)
+        )
+
+print(head(pmlTrainingTrim))
+```
+After discarding columns of NA data, the training dataframe is reduced from [19,622 obs. of 160 variables] to [19,622 obs. of 30 variables]
+
+### Predictor Selection Using Exploratory Plotting
+After a qualitative review of the pairs plots, five predictors were selected arbritrarily for training a rf PML model.  The following figure shows a pairs plot of the five selected predictors and the categorical assignment the observations.  Significant overlap between categories is manifest in each pairs plot.  However, the spread between categories is qualitatively more apparent than in the remaining 24 predictors.
+```{r plotExplor, echo=TRUE, fig.cap="Feature Plot", fig.width=10, fig.height=10}
+pmlTrainingTrim3 <- pmlTrainingTrim %>%
+    select(
+        c(14,15,16,25,26,30)
+        )
+fturSubSet2 <- featurePlot(x=pmlTrainingTrim3, y = pmlTrainingTrim3$classe, plot="pairs")
+fturSubSet2
+```
+The pairs plot shows reasonable separation of Category A (specification) from the error categories.  The pairs plot shows significant overlap between error categories.  Based on exploratory data review, the testing dataframe is reduced from [19,622 obs. of 30 variables] to [19,622 obs. of 6 variables].
+
+### Systematic Predictor Selection using Caret
+With regard to Best Known Methods (BKM), 
+
+1. Predictors with nearly zero variance are discarded;
+2. Predictors that are highly correlated with another predictor are discarded;
+3. Predictors that are a linear combination of other predictors are discarded.  Alternatively, principle components analysis can be used to transform away a redundant predictor.
+```{r autoSelect, echo=TRUE }
+nzv <- nearZeroVar(pmlTrainingTrim[,-30], saveMetrics= TRUE)
+nzv
+isCor <- cor(pmlTrainingTrim[,-30])
+tooCor <- findCorrelation(isCor, cutoff = .75)
+nameList <- names(pmlTrainingTrim)
+dropList <- nameList[1]
+for(i in 2:(length(tooCor))){
+    dropList <- rbind(dropList, nameList[i])
+    }
+dropList
+pmlTrainingTrimRefined <- pmlTrainingTrim[,!(nameList %in% dropList)]
+findLinearCombos(pmlTrainingTrimRefined[,-length(names(pmlTrainingTrimRefined))])
+head(pmlTrainingTrimRefined)
+```
+The results of this code chunk shows that none of the predictors have nearly zero variance.  However, 12 predictors are identified as being highly corelated with the remaining predictors.  These 12 predictors are discarded.  No predictors are a linear combination of other predictors.  Based on BKM, the training dataframe is reduced from [19,622 obs. of 30 variables] to [19,622 obs. of 18 variables].  Note: one of the variables is the assessment of the HA, so there are 17 predictors.
+
+### PML Training
+Generating PML models is computationally intensive with multiple, independent ```for``` loops.  Code execution is made efficient by executing independent ```for``` loops on independent processors.  R does not intrinsically parallelize code execution.  A guideline is assigning half the number of processors as available for parallel processing.  The following chunk assigns processors for parallel computation.
+```{r doPar, echo=TRUE}
+coreCount <- detectCores()
+cl <- makeCluster(coreCount / 2)
+registerDoParallel(cl)
+getDoParWorkers()
+getDoParVersion()
+```
+Training is implemented with method=rf, and for two independently generated sets of predictors.  Training is implemented with 5-fold cross-validation using the trainControl() method.  The createPartition() method partitions the Training dataframe into a set [(70%) 13737 obs] for training and a set [(30%) 5885 obs] for estimating out of sample error.  By fixing the seed with a consistent integer, the calculations are RR.  The default value for number of trees in the Caret implementation of rf is 500.  However, the number of trees is fixed at 125 due to memory management issues on this investigator's hardware platform.
+
+This implementation of training checks the working directory for an existing PML model.  If there is no model, then a model is trained. Else, the existing model is loaded into memory. (NOTE: if model parameters are changed, then the model name must change.  Otherwise, the existing model overides generating a revised PML model.)
+```{r PML_5var, echo=TRUE}
+set.seed(314159)
+control <- trainControl(method="cv", 5)
+set.seed(314159)
+inTrain <- createDataPartition(y = pmlTrainingTrim3$classe, p=0.7, list=FALSE)
+training <- pmlTrainingTrim3[inTrain,]
+testing <- pmlTrainingTrim3[-inTrain,]
+dim(training); dim(testing)
+
+if( !file.exists('modFit125trees.rds')) {
+    set.seed(314159)
+    modFit <- train(classe ~ .,data=training,method="rf", trControl=control, ntree=125, prox=TRUE)
+    saveRDS(modFit, file="modFit125trees.rds")
+    } else {
+        modFit <- readRDS('modFit125trees.rds')
+        }
+modFit
+
+set.seed(314159)
+pred <- predict(modFit,testing)
+confusionMatrix(testing$classe, pred)
+```
+For the 5-predictor rf PML model, the accuracy and kappa are 75% and 69%, respectively, for the seed value of 314159 using the supervised testing dataframe.  The sensitivity and the specificity for Class A (specification) is 86% and 95%, respectively.  The sensitivity and the specificity for error classes is about 70% and about 93%, respectively.  The in-sample accuracy and kappa are 74% and 67%, respectively.
+```{r PML-17var, echo=TRUE}
+set.seed(314159)
+control <- trainControl(method="cv", 5)
+set.seed(314159)
+inTrain <- createDataPartition(y = pmlTrainingTrimRefined$classe, p=0.7, list=FALSE)
+training <- pmlTrainingTrimRefined[inTrain,]
+testing <- pmlTrainingTrimRefined[-inTrain,]
+dim(training); dim(testing)
+if( !file.exists('modFitAuto125trees.rds')) {
+    set.seed(314159)
+    modFitAuto <- train(classe ~ .,data=pmlTrainingTrimRefined, method="rf", trControl=control, ntree=250, prox=TRUE)
+    saveRDS(modFit, file="modFitAuto125trees.rds")
+    } else {
+        modFitAuto <- readRDS('modFitAuto125trees.rds')
+        }
+modFitAuto
+
+predAuto <- predict(modFitAuto,testing); testing$predRight <- predAuto==testing$classe
+table(predAuto,testing$classe)
+confusionMatrix(testing$classe, predAuto)
+stopCluster(cl)
+```
+For the 17-predictor rf PML model, the accuracy and kappa are 100% and 100%, respectively, for the seed value of 314159 measured against the supervised testing dataframe.  The sensitivity and the specificity for Class A (specification) are unity.  The sensitivity and the specificity for error classes are also unity.  The in-sample accuracy and kappa are 95% and 94%, repsectively.  This author suspects a fortuitous selection of seed for perfect performance against the supervised testing dataframe.  For several random seeds, the model performance against the supervised testing dataframe was not perfect.  The following plot shows the dependence on accuracy of the 17-predictor model vs randomly selected predictors for ``mtry```.
+```{r plotAccuracy, echo=TRUE}
+ggplot(modFitAuto)
+```
+The optimal setting for ```mtry``` is 2.
+
+## Results and Discussion
+From the Confusion Matrix of the 5-predictor rf model, the sensitivity and specificity for Class A is 85% and 95%, respectively, measured against the supervised testing set.  While the specificity for the individual error classes is about 90%, the sensitivity is about 70%.  This is consistent with the overlap between error classes observed in the exploratory plots.  Accuracy and Kappa are 74% and 67%, respectively, from resampling prediction.
+
+By increasing the predictors from 5 to 17 and using a BKM for selecting predictors, Accuracy and Kappa increase from 75% to unity and from 68% to unity, respectively, measured against the supervised testing set.  In addition, the sensitivity and specifity of all classes are unity.  This is likely coincidental with the selected seed or inadvertent over-tuning of the model.  The Accuracy and Kappa are 94% and 95%, respectively, measured by resampling prediction.
+
+The following plot shows Accuracy and Kappa for both models along with 95% confidence intervals measured by resampling prediction.
+```{r plotModelComparison, echo=TRUE}
+resamps <- resamples(list(RF_4vars = modFit,
+                          RF_17vars = modFitAuto))
+summary(resamps)
+bwplot(resamps, layout = c(2, 1))
+```
+The improvement in accuracy and Kappa by systematically selecting 17 predictors compared to heuristic selection of 5 predictors is statistically significant.
+
+## Final Prediction
+The two PML models assess the Testing dataframe provided by Staff for evaluation.  The following code chunk compares predictions by the two PML models.
+```{r pmlPrediction, echo=TRUE}
+pred5VarFinal <- predict(modFit,pmlTestingTrim)
+pred17VarFinal <- predict(modFitAuto,pmlTestingTrim)
+confusionMatrix(pred17VarFinal, pred5VarFinal)$overall[1]; confusionMatrix(pred17VarFinal, pred5VarFinal)$table
+```
+With the 17-predictor rf model as Reference and 5-predictor rf model as Prediction, there is 80% agreement between the two models.  Note, measured against the final Submission dataframe of 20 observations, accuracy is 95% for the 17-predictor rf model.  For this disprepancy, the 5-predictor model provided the correct prediction.
+
+The following code chunk captures a listing of all variables used in this paper and shuts down the multi-processor thread environment.
+```{r finalHygiene, echo=TRUE}
+varList <- ls()
+writeLines(unlist(lapply(varList, paste, collapse=" ")),
+           con = 'varList.txt', sep = "\n", useBytes = FALSE)
+stopCluster(cl)
+```
+
+## Conclusions
+Two supervised PML models were generated for assessing the quality of execution for the HA of dumbbell curls.  The PML models are both based on method=rf.  The difference between the two models is selection method and quantity of predictors. The systematic selection method with 17 predictors demonstrated about 30% improved accuracy relative to heuristic selection method with 5 predictors.  The rf method worked surprisingly well given that time dependence of this HA was ignored.  Aside: this work is released under the license GPL 2.
+
+## Acknowledgements
+The author acknowledges informed discussions with M Weston, Z Unsell, P Tressell, and R Restrepo.
+
+## References
+[1] Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012.
