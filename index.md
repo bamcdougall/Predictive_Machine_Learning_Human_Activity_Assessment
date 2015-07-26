@@ -177,6 +177,7 @@ fturSubSet2
 ```
 
 ![Feature Plot](figure/plotExplor-1.png) 
+
 The pairs plot shows reasonable separation of Category A (specification) from the error categories.  The pairs plot shows significant overlap between error categories.  Based on exploratory data review, the testing dataframe is reduced from [19,622 obs. of 30 variables] to [19,622 obs. of 6 variables].
 
 ### Systematic Predictor Selection using Caret
@@ -286,7 +287,7 @@ head(pmlTrainingTrimRefined)
 The results of this code chunk shows that none of the predictors have nearly zero variance.  However, 12 predictors are identified as being highly corelated with the remaining predictors.  These 12 predictors are discarded.  No predictors are a linear combination of other predictors.  Based on BKM, the training dataframe is reduced from [19,622 obs. of 30 variables] to [19,622 obs. of 18 variables].  Note: one of the variables is the assessment of the HA, so there are 17 predictors.
 
 ### PML Training
-Generating PML models is computationally intensive with multiple, independent ```for``` loops.  Code execution is made efficient by executing independent ```for``` loops on independent processors.  R does not intrinsically parallelize code execution.  A guideline is assigning half the number of processors as available for parallel processing.  The following chunk assigns processors for parallel computation.
+Generating PML models is computationally intensive with multiple, independent ```for``` loops.  Code execution is made efficient by executing independent ```for``` loops on independent processors.  R does not intrinsically parallelize code execution.  A guideline is assigning half the number of processors as available for parallel processing, and generating that number of copies of R for running independent code chunks.  The following chunk assigns processors for parallel computation.
 
 ```r
 coreCount <- detectCores()
@@ -518,6 +519,7 @@ ggplot(modFitAuto)
 ```
 
 ![plot of chunk plotAccuracy](figure/plotAccuracy-1.png) 
+
 The optimal setting for ```mtry``` is 2.
 
 ## Results and Discussion
