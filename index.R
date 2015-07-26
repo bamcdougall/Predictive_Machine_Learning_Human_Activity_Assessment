@@ -165,7 +165,7 @@ stopCluster(cl)
 ## ----plotAccuracy, echo=TRUE---------------------------------------------
 ggplot(modFitAuto)
 
-## ------------------------------------------------------------------------
+## ----plotModelComparison, echo=TRUE--------------------------------------
 resamps <- resamples(list(RF_4vars = modFit,
                           RF_17vars = modFitAuto))
 summary(resamps)
@@ -176,7 +176,9 @@ pred5VarFinal <- predict(modFit,pmlTestingTrim)
 pred17VarFinal <- predict(modFitAuto,pmlTestingTrim)
 confusionMatrix(pred17VarFinal, pred5VarFinal)$overall[1]; confusionMatrix(pred17VarFinal, pred5VarFinal)$table
 
+## ----finalHygiene, echo=TRUE---------------------------------------------
 varList <- ls()
 writeLines(unlist(lapply(varList, paste, collapse=" ")),
            con = 'varList.txt', sep = "\n", useBytes = FALSE)
+stopCluster(cl)
 

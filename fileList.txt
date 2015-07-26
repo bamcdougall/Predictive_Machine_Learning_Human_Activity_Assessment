@@ -1,7 +1,8 @@
-2013.Velloso.QAR-WLE.pdf
 CodeBook.html
+CodeBook.md
 CodeBook.Rmd
 environment.txt
+figure
 fileList.txt
 ftur1.png
 ftur2.png
@@ -14,6 +15,7 @@ ftur8.png
 fturSubset.png
 fturSubset2.png
 index.html
+index.md
 index.R
 index.Rmd
 LICENSE
@@ -22,5 +24,9 @@ modFitAuto125trees.rds
 pml-testing.csv
 pml-training.csv
 PML030_ProjectSubmissionScript.R
+ReadMe.html
+ReadMe.md
 ReadMe.Rmd
 README.txt
+varList.txt
+varList_md.txt
